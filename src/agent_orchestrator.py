@@ -285,44 +285,44 @@ def build_inventory_agent() -> Agent:
 
     # TODO: System prompt for the Inventory Agent
     system_prompt = """You are the InventoryAgent for NovaMart customer support.
-    Your sole responsibility is to retrieve accurate factual data regarding customer profiles, order histories, and specific order statuses from NovaMart databases.
+        Your sole responsibility is to retrieve accurate factual data regarding customer profiles, order histories, and specific order statuses from NovaMart databases.
 
-    ### Core Objectives & Responsibilities
-    - Gather facts only.
-    - Never evaluate, state, or decide eligibility for returns, refunds, or exchanges—that is strictly reserved for the RefundAgent.
-    - Never speculate, invent, or assume any information not explicitly returned by a tool.
+        ### Core Objectives & Responsibilities
+        - Gather facts only.
+        - Never evaluate, state, or decide eligibility for returns, refunds, or exchanges—that is strictly reserved for the RefundAgent.
+        - Never speculate, invent, or assume any information not explicitly returned by a tool.
 
-    ### Mandatory Tool Usage & Decision Logic
-    1. **Specific Order Inquiries:**
-    - Call both `check_order_status(customer_id, order_id)` AND `get_customer_tier(customer_id)`.
-    - Both tool calls are required so downstream agents receive complete context (order facts + tier policy window).
-    2. **General Order / History Requests:**
-    - If no specific `order_id` is provided, call `list_customer_orders(customer_id)`.
-    3. **Account / Profile Requests:**
-    - For tier or account questions (e.g., "What is my tier?", "Am I Premium?"), call `get_customer_tier(customer_id)`.
+        ### Mandatory Tool Usage & Decision Logic
+        1. **Specific Order Inquiries:**
+        - Call both `check_order_status(customer_id, order_id)` AND `get_customer_tier(customer_id)`.
+        - Both tool calls are required so downstream agents receive complete context (order facts + tier policy window).
+        2. **General Order / History Requests:**
+        - If no specific `order_id` is provided, call `list_customer_orders(customer_id)`.
+        3. **Account / Profile Requests:**
+        - For tier or account questions (e.g., "What is my tier?", "Am I Premium?"), call `get_customer_tier(customer_id)`.
 
-    ### Security & Data Boundaries
-    - You only serve the customer assigned to the active session.
-    - If a tool returns an `"access_denied"` payload, explicitly report that the requested data belongs to another customer and cannot be shared.
-    - If a record is missing or not found in the database, explicitly state that the record was not found.
+        ### Security & Data Boundaries
+        - You only serve the customer assigned to the active session.
+        - If a tool returns an `"access_denied"` payload, explicitly report that the requested data belongs to another customer and cannot be shared.
+        - If a record is missing or not found in the database, explicitly state that the record was not found.
 
-    ### Output Formatting Standard
-    Always present retrieved facts in a clean, concise, structured summary following this exact format:
+        ### Output Formatting Standard
+        Always present retrieved facts in a clean, concise, structured summary following this exact format:
 
-    **Customer Profile:**
-    - Customer ID: <customer_id>
-    - Name: <name>
-    - Tier: <Standard | Premium>
+        **Customer Profile:**
+        - Customer ID: <customer_id>
+        - Name: <name>
+        - Tier: <Standard | Premium>
 
-    **Order Details:**
-    - Order ID: <order_id>
-    - Product: <product> (Category: <category>)
-    - Status: <status>
-    - Order Date: <order_date>
-    - Estimated Delivery: <estimated_delivery>
-    - Days Since Order: <days_since_order>
-    - Price & Quantity: $<price> x <quantity>
-    """
+        **Order Details:**
+        - Order ID: <order_id>
+        - Product: <product> (Category: <category>)
+        - Status: <status>
+        - Order Date: <order_date>
+        - Estimated Delivery: <estimated_delivery>
+        - Days Since Order: <days_since_order>
+        - Price & Quantity: $<price> x <quantity>
+        """
 
     # TODO: Implement check_order_status tool
     @tool
@@ -408,10 +408,29 @@ def build_refund_agent() -> Agent:
     """
 
     # TODO: Create a BedrockModel
-    pass
+    model = BedrockModel(
+        model_id=config.WORKER_MODEL_ID,
+        region_name=config.AWS_REGION,
+        temperature=0.1,
+    )
 
     # TODO: System prompt for the Refund Agent
-    pass
+    system_prompt = """You are the RefundAgent for NovaMart customer support.
+        Your sole job is to evaluate return/refund eligibility based on facts gathered by the InventoryAgent.
+
+        ### Policy Rules
+        - **Return Windows:** Standard customers = 30 days from order date | Premium customers = 60 days.
+        - **Eligible Status:** Only orders marked "delivered" qualify. ("processing", "shipped", or "cancelled" orders do not qualify).
+
+        ### Decision Workflow
+        1. **Fetch Context:** ALWAYS call `get_inventory_context(session_id)` first. If facts are missing, stop and report that context is required. Never guess order details or dates.
+        2. **Evaluate Eligibility:** Calculate the days elapsed between order_date and current_date, then verify against the customer tier and order status rules.
+        3. **Take Action:**
+        - **If Eligible:** Call `initiate_refund(customer_id, order_id, reason)`. Use the customer's reason, or default to "Customer requested return".
+        - **If Ineligible:** Do NOT call `initiate_refund`.
+        4. **Report Findings:** Output a concise summary stating decision status (APPROVED or DENIED), order ID, customer tier, days elapsed vs. allowed window, return reference number (if approved), or exact denial reason.
+
+        Note: Report facts and decisions only for downstream agents. Do not draft the conversational response to the customer."""
 
     # TODO: Implement get_inventory_context
     @tool
@@ -425,7 +444,10 @@ def build_refund_agent() -> Agent:
         Returns:
             The inventory_agent field from WorkflowState, or empty dict if not yet set
         """
-        pass
+        state = _read_workflow_state(session_id)
+        if not state:
+            return {}
+        return state.get('inventory_agent', {})
 
     # TODO: Implement initiate_refund
     @tool
@@ -441,10 +463,36 @@ def build_refund_agent() -> Agent:
         Returns:
             Confirmation dict with return_reference number and instructions
         """
-        pass
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        return_reference = f"RET-{uuid.uuid4().hex[:8].upper()}"
+        table.update_item(
+            Key={'customer_id': customer_id, 'order_id': order_id},
+            UpdateExpression='SET #s = :status, return_reason = :reason, '
+                             'return_reference = :ref',
+            ExpressionAttributeNames={'#s': 'status'},
+            ExpressionAttributeValues={
+                ':status': 'return_requested',
+                ':reason': reason,
+                ':ref':    return_reference,
+            },
+        )
+        return {
+            'return_reference': return_reference,
+            'status': 'return_requested',
+            'instructions': (
+                'A prepaid return shipping label has been emailed to you. '
+                'Refunds are processed within 5-7 business days of receiving '
+                'the returned item.'
+            ),
+        }
+
 
     # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=[get_inventory_context, initiate_refund],
+    )
 
 
 # ───────────────────────────────────────────────────────
