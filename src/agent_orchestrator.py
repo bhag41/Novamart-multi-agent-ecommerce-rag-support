@@ -277,13 +277,77 @@ def build_inventory_agent() -> Agent:
     """
 
     # TODO: Create a BedrockModel using the WORKER model
-    pass
+    model = BedrockModel(
+        model_id=config.WORKER_MODEL_ID,
+        temperature=0.1,
+        region_name=config.AWS_REGION,
+    )
 
     # TODO: System prompt for the Inventory Agent
-    pass
+    system_prompt = """You are the InventoryAgent for NovaMart customer support.
+    Your sole responsibility is to retrieve accurate factual data regarding customer profiles, order histories, and specific order statuses from NovaMart databases.
+
+    ### Core Objectives & Responsibilities
+    - Gather facts only.
+    - Never evaluate, state, or decide eligibility for returns, refunds, or exchanges—that is strictly reserved for the RefundAgent.
+    - Never speculate, invent, or assume any information not explicitly returned by a tool.
+
+    ### Mandatory Tool Usage & Decision Logic
+    1. **Specific Order Inquiries:**
+    - Call both `check_order_status(customer_id, order_id)` AND `get_customer_tier(customer_id)`.
+    - Both tool calls are required so downstream agents receive complete context (order facts + tier policy window).
+    2. **General Order / History Requests:**
+    - If no specific `order_id` is provided, call `list_customer_orders(customer_id)`.
+    3. **Account / Profile Requests:**
+    - For tier or account questions (e.g., "What is my tier?", "Am I Premium?"), call `get_customer_tier(customer_id)`.
+
+    ### Security & Data Boundaries
+    - You only serve the customer assigned to the active session.
+    - If a tool returns an `"access_denied"` payload, explicitly report that the requested data belongs to another customer and cannot be shared.
+    - If a record is missing or not found in the database, explicitly state that the record was not found.
+
+    ### Output Formatting Standard
+    Always present retrieved facts in a clean, concise, structured summary following this exact format:
+
+    **Customer Profile:**
+    - Customer ID: <customer_id>
+    - Name: <name>
+    - Tier: <Standard | Premium>
+
+    **Order Details:**
+    - Order ID: <order_id>
+    - Product: <product> (Category: <category>)
+    - Status: <status>
+    - Order Date: <order_date>
+    - Estimated Delivery: <estimated_delivery>
+    - Days Since Order: <days_since_order>
+    - Price & Quantity: $<price> x <quantity>
+    """
 
     # TODO: Implement check_order_status tool
-    pass
+    @tool
+    def check_order_status(customer_id: str, order_id: str) -> dict:
+        """
+        Find the order's status and details from DynamoDB.
+        Orders table has a composite key (customer_id + order_id), so both
+        are required to retrieve a single order. 
+
+        Args:
+            customer_id: The customer's unique identifier
+            order_id: The order's unique identifier (e.g. ORD-12345)
+
+        Returns:
+            Order record (status, order_date, product_name, price, etc.) or
+            an error dict if the order was not found
+        """
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        response = table.get_item(
+            Key={'customer_id': customer_id, 'order_id': order_id}
+        )
+        item = response.get('Item')
+        if not item:
+            return {'error': f'No order {order_id} found for customer {customer_id}'}
+        return item
 
     # TODO: Implement get_customer_tier
     @tool
@@ -298,7 +362,12 @@ def build_inventory_agent() -> Agent:
         Returns:
             Customer profile including tier and account details
         """
-        pass
+        table = dynamodb.Table(config.CUSTOMERS_TABLE)
+        response = table.get_item(Key={'customer_id': customer_id})
+        item = response.get('Item')
+        if not item:
+            return {'error': f'No customer found with id {customer_id}'}
+        return item
 
     # TODO: Implement list_customer_orders
     @tool
@@ -312,10 +381,18 @@ def build_inventory_agent() -> Agent:
         Returns:
             List of all orders with order_id, status, order_date, and amount
         """
-        pass
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        response = table.query(
+            KeyConditionExpression=Key('customer_id').eq(customer_id)
+        )
+        return {'orders': response.get('Items', [])}
 
     # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=[check_order_status, get_customer_tier, list_customer_orders],
+    )
 
 
 # ───────────────────────────────────────────────────────
