@@ -629,26 +629,59 @@ def build_policy_agent() -> Agent:
 
         # Use ThreadPoolExecutor to run all three retrievers in parallel
         # Collect results into a dict: {'Returns': '...', 'Shipping': '...', ...}
+        results = {}
+        kb_start = time.time()
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(_run_retriever, domain, agent, query) : domain
+                for domain, agent in retrievers.items()
+            }
+            for future in as_completed(futures):
+                domain, result_text = future.result()
+                results[domain] = result_text
 
 
 
         # ── Trace: all KBs responded - print each result sequentially ─────
-        # trace.kb_done(len(retrievers))
-        # for domain in ['Returns', 'Shipping', 'Warranty']:
-        #     trace.kb_result(domain, results.get(domain, '[No results]'))
+        trace.kb_done(len(retrievers))
+        for domain in ['Returns', 'Shipping', 'Warranty']:
+            trace.kb_result(domain, results.get(domain, '[No results]'))
 
     
         # Combine results from all three domains and return
-        pass
+        combined = "\n\n".join(
+            f"=== {domain} Policy ===\n{results.get(domain, '[No results]')}"
+            for domain in ['Returns', 'Shipping', 'Warranty']
+        )
+        return combined
 
     # TODO: Create a BedrockModel for the PolicyAgent coordinator
-    pass
+    coordinator_model = BedrockModel(
+        model_id=config.WORKER_MODEL_ID,
+        region_name=config.AWS_REGION,
+        temperature=0.2,
+    )
 
     # TODO: System prompt for PolicyAgent coordinator
-    pass
+    system_prompt = """You are the Policy Agent for NovaMart customer support.
+        Your role is to evaluate and synthesize customer policy inquiries using ONLY text retrieved from the policy knowledge bases.
+
+        ### Mandatory Rules
+        1. ALWAYS call `search_all_policies` FIRST with the customer's question. It queries the Returns, Shipping, and Warranty knowledge bases in parallel.
+        2. Ground your response strictly in the retrieved passages. Never invent time windows, return fees, or warranty conditions. If the passages do not cover the question, state that plainly.
+        3. Account for Customer Tiers: Policies often differ by tier (Standard vs. Premium). State both tiers if the query is general, or highlight the applicable tier if specified in the context.
+        4. Preserved Accuracy: Use exact figures, days, and terms directly as written in the retrieved text (e.g., 30 days, 60 days).
+        5. Source Categorization: Clearly organize your summary by mentioning which policy domain (Returns, Shipping, or Warranty) each rule comes from.
+        6. Scope Boundaries: You only possess policy context. You cannot view specific customer account details or order histories—if asked about specific orders, explain that another worker agent handles account lookup.
+
+        Output a clear, structured, and factual summary intended for downstream agents to synthesize into the final customer response."""
 
     # TODO: Instantiate and return the PolicyAgent coordinator
-    pass
+    return Agent(
+        model=coordinator_model,
+        system_prompt=system_prompt,
+        tools=[search_all_policies],
+    )
 
 
 # ───────────────────────────────────────────────────────
