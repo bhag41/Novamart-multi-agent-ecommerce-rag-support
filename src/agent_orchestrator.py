@@ -780,8 +780,8 @@ def build_orchestrator_agent(
         ### Mandatory Routing Rules
         1. Initial Step: Call `initialize_session` FIRST for EVERY request—no exceptions.
         2. Orders & Refunds: For order tracking, returns, or refund inquiries:
-        - Call `route_to_inventory_agent` first to fetch order context.
-        - If a return or refund is requested, call `route_to_refund_agent` next.
+            - Call `route_to_inventory_agent` first to fetch order context.
+            - If a return or refund is requested, call `route_to_refund_agent` next.
         3. Policy Information: For general policy questions (return rules, shipping fees, warranty terms), call `route_to_policy_agent`.
         4. Account Profile Inquiries: For account profile questions ("What is my tier?", "Am I premium?"), call `route_to_inventory_agent`. NEVER route account profile questions to `route_to_policy_agent`.
         5. Math & Calculations: For calculation queries, bypass Inventory, Refund, and Policy agents. Proceed directly to `route_to_communication_agent` (which handles calculations internally).
@@ -808,7 +808,33 @@ def build_orchestrator_agent(
         Returns:
             Inventory facts retrieved by the InventoryAgent
         """
-        pass
+        column = 'inventory_agent'
+        state = _read_workflow_state(session_id)
+        if not state:
+            return f"Session {session_id} has no WorkflowState. Call initialize_session first."
+
+        old_version = int(state.get('version', 0))
+
+        trace.step_start(column)
+        _, label, _, _ = _AGENT_META[column]
+        trace.agent_section(label)
+
+        prompt = f"Customer ID: {customer_id}\nRequest: {request}"
+        xray_start = time.time()
+        
+        try:
+            # Clear previous conversation history so workers don't leak state across sessions
+            inventory_agent.messages.clear()
+            result = str(inventory_agent(prompt))
+        except Exception as exc:
+            logger.error(f"InventoryAgent failed: {exc}")
+            result = f"[InventoryAgent could not complete the request: {exc}]"
+        finally:
+            _xray_subsegment(session_id, 'InventoryAgent', xray_start, time.time())
+
+        _update_workflow_state(session_id, {column: result}, old_version)
+        trace.step_done(column, old_version)
+        return result
 
     # TODO: Implement route_to_policy_agent
     @tool
@@ -824,7 +850,33 @@ def build_orchestrator_agent(
         Returns:
             Policy information retrieved and synthesized by PolicyAgent
         """
-        pass
+        column = 'policy_agent'
+        state = _read_workflow_state(session_id)
+        if not state:
+            return f"Session {session_id} has no WorkflowState. Call initialize_session first."
+
+        old_version = int(state.get('version', 0))
+
+        trace.step_start(column)
+        _, label, _, _ = _AGENT_META[column]
+        trace.agent_section(label)
+
+        prompt = request
+        xray_start = time.time()
+
+        try:
+            # Clear previous conversation memory so worker starts fresh
+            policy_agent.messages.clear()
+            result = str(policy_agent(prompt))
+        except Exception as exc:
+            logger.error(f"PolicyAgent failed: {exc}")
+            result = f"[PolicyAgent could not complete the request: {exc}]"
+        finally:
+            _xray_subsegment(session_id, 'PolicyAgent', xray_start, time.time())
+
+        _update_workflow_state(session_id, {column: result}, old_version)
+        trace.step_done(column, old_version)
+        return result
 
     # TODO: Implement route_to_refund_agent
     @tool
@@ -841,7 +893,37 @@ def build_orchestrator_agent(
         Returns:
             Refund decision from the RefundAgent
         """
-        pass
+        column = 'refund_agent'
+        state = _read_workflow_state(session_id)
+        if not state:
+            return f"Session {session_id} has no WorkflowState. Call initialize_session first."
+
+        # Validate prerequisite findings exist in state if required (e.g. inventory findings)
+        if 'inventory_agent' not in state:
+            return "Cannot run yet: 'inventory_agent' findings are missing. Route to that agent first."
+
+        old_version = int(state.get('version', 0))
+
+        trace.step_start(column)
+        _, label, _, _ = _AGENT_META[column]
+        trace.agent_section(label)
+
+        prompt = f"Customer ID: {customer_id}\nRequest: {request}"
+        xray_start = time.time()
+
+        try:
+            # Clear previous conversation memory so worker starts fresh
+            refund_agent.messages.clear()
+            result = str(refund_agent(prompt))
+        except Exception as exc:
+            logger.error(f"RefundAgent failed: {exc}")
+            result = f"[RefundAgent could not complete the request: {exc}]"
+        finally:
+            _xray_subsegment(session_id, 'RefundAgent', xray_start, time.time())
+
+        _update_workflow_state(session_id, {column: result}, old_version)
+        trace.step_done(column, old_version)
+        return result
 
     # TODO: Implement route_to_communication_agent
     @tool
@@ -859,7 +941,42 @@ def build_orchestrator_agent(
         Returns:
             Final customer-facing response drafted by CommunicationAgent
         """
-        pass
+        column = 'communication_agent'
+        state = _read_workflow_state(session_id)
+        if not state:
+            return f"Session {session_id} has no WorkflowState. Call initialize_session first."
+
+        old_version = int(state.get('version', 0))
+
+        trace.step_start(column)
+        _, label, _, _ = _AGENT_META[column]
+        trace.agent_section(label)
+
+        # Pass session_id explicitly so CommunicationAgent can invoke get_full_workflow_context(session_id)
+        prompt = (
+            f"Session ID: {session_id}\n"
+            f"Customer ID: {customer_id}\n"
+            f"Original Customer Request: {original_request}"
+        )
+        xray_start = time.time()
+
+        try:
+            # Clear previous conversation memory so worker starts fresh
+            communication_agent.messages.clear()
+            result = str(communication_agent(prompt))
+        except Exception as exc:
+            logger.error(f"CommunicationAgent failed: {exc}")
+            result = (
+                "We encountered an internal issue processing your request. "
+                "Please contact NovaMart support for assistance."
+            )
+        finally:
+            _xray_subsegment(session_id, 'CommunicationAgent', xray_start, time.time())
+
+        _update_workflow_state(session_id, {column: result}, old_version)
+        trace.step_done(column, old_version)
+        return result
+
 
     # TODO: Implement initialize_session
     @tool
@@ -875,10 +992,22 @@ def build_orchestrator_agent(
         Returns:
             Confirmation that the session was initialized
         """
-        pass
+        _create_workflow_state(session_id, customer_id)
+        _xray_start_trace(session_id)
+        return f"Session {session_id} initialized for customer {customer_id}"
 
     # TODO: Instantiate and return the OrchestratorAgent
-    pass
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=[
+            initialize_session,
+            route_to_inventory_agent,
+            route_to_policy_agent,
+            route_to_refund_agent,
+            route_to_communication_agent,
+        ],
+    )
 
 
 # ═══════════════════════════════════════════════════════
