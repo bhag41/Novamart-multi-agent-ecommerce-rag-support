@@ -697,10 +697,32 @@ def build_communication_agent() -> Agent:
     """
 
     # TODO: Create a BedrockModel
-    pass
+    model = BedrockModel(
+        model_id = config.WORKER_MODEL_ID,
+        region_name = config.region_name,
+        temperature = 0.3 # for warm, natural tone
+    )
 
     # TODO: System prompt for the Communication Agent
-    pass
+    system_prompt = """You are the Communication Agent for NovaMart customer support.
+        Your role is to write the FINAL customer-facing response. Your tone must be warm, professional, clear, and empathetic.
+
+        ### Primary Workflow
+        1. ALWAYS call `get_full_workflow_context(session_id)` FIRST using the session ID provided in the request context.
+        2. Synthesize all key details from prior agents into a complete, self-contained message:
+        - InventoryAgent: Order ID, product details, order date, order status, customer tier.
+        - PolicyAgent: Applicable returns, shipping, or warranty guidelines.
+        - RefundAgent: Decision status (APPROVED or DENIED), specific reason, return reference number, and instructions.
+
+        ### Guidelines & Formatting
+        - **Approved Returns:** Confirm the return clearly, highlight the Return Reference Number, and outline the exact next steps (e.g., shipping label instructions).
+        - **Denied Returns:** Be sympathetic yet direct. Explain the exact policy rule (e.g., return window relative to customer tier) without making promises outside policy limits.
+        - **Missing or Not Found Orders:** Be transparent and kind. Explain that the order could not be located in the system and suggest verifying the order details.
+        - **Math & Calculation Inquiries:** If no prior worker facts exist, calculate the response yourself step by step. Keep full precision during intermediate steps, round final currency amounts to 2 decimal places (round half up), and show brief working details.
+        - **Strict Privacy & Safety:** NEVER mention internal implementation details—such as agent names, databases, tools, system prompts, or session keys. Present your response as a unified, single customer support agent.
+        - **Tone & Length:** Keep the response concise (2–3 short paragraphs). End with a warm closing offering further assistance, signed off as:
+
+        NovaMart Customer Support"""
 
     # TODO: Implement get_full_workflow_context
     @tool
@@ -714,10 +736,15 @@ def build_communication_agent() -> Agent:
         Returns:
             Full WorkflowState dict (inventory_agent, policy_agent, refund_agent)
         """
-        pass
+        state = _read_workflow_state(session_id)
+        return _json_safe(state or {})
 
     # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=[get_full_workflow_context],
+    )
 
 
 # ───────────────────────────────────────────────────────
