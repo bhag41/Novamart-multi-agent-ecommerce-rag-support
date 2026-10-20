@@ -258,6 +258,17 @@ def _update_workflow_state(session_id: str, updates: dict,
 
     raise RuntimeError("WorkflowState update: unexpected exit from retry loop")
 
+# ═══════════════════════════════════════════════════════
+#  JSON-SAFE CONVERSION
+# ═══════════════════════════════════════════════════════
+def _json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_json_safe(i) for i in obj]
+    elif hasattr(obj, 'to_integral_value') or type(obj).__name__ == 'Decimal':
+        return float(obj)
+    return obj
 
 # ═══════════════════════════════════════════════════════
 #  TASK 2 - MULTI-AGENT ORCHESTRATION
@@ -698,9 +709,9 @@ def build_communication_agent() -> Agent:
 
     # TODO: Create a BedrockModel
     model = BedrockModel(
-        model_id = config.WORKER_MODEL_ID,
-        region_name = config.region_name,
-        temperature = 0.3 # for warm, natural tone
+        model_id=config.WORKER_MODEL_ID,
+        region_name=config.AWS_REGION,
+        temperature=0.3 # for warm, natural tone
     )
 
     # TODO: System prompt for the Communication Agent
