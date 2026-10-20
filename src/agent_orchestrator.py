@@ -432,6 +432,9 @@ def build_refund_agent() -> Agent:
         ### Policy Rules
         - **Return Windows:** Standard customers = 30 days from order date | Premium customers = 60 days.
         - **Eligible Status:** Only orders marked "delivered" qualify. ("processing", "shipped", or "cancelled" orders do not qualify).
+        -**Evaluate Eligibility:** Use the current date explicitly supplied
+        in the request context. Calculate days elapsed since order_date,
+        then verify against the customer tier and order status rules.
 
         ### Decision Workflow
         1. **Fetch Context:** ALWAYS call `get_inventory_context(session_id)` first. If facts are missing, stop and report that context is required. Never guess order details or dates.
@@ -720,18 +723,29 @@ def build_communication_agent() -> Agent:
 
         ### Primary Workflow
         1. ALWAYS call `get_full_workflow_context(session_id)` FIRST using the session ID provided in the request context.
-        2. Synthesize all key details from prior agents into a complete, self-contained message:
+        2. Synthesize the available findings into a complete, self-contained message:
         - InventoryAgent: Order ID, product details, order date, order status, customer tier.
         - PolicyAgent: Applicable returns, shipping, or warranty guidelines.
-        - RefundAgent: Decision status (APPROVED or DENIED), specific reason, return reference number, and instructions.
+        - RefundAgent: Recorded decision, specific reason, return reference number, and instructions.
+        3. Distinguish successful findings from errors, missing context, and incomplete evaluations. A stored response does not necessarily mean the task succeeded.
+
+        ### Refund Decision Accuracy
+        - RefundAgent's recorded result is the authority for refund decisions. NEVER independently evaluate eligibility, calculate return windows, or override its result.
+        - Confirm approval ONLY when RefundAgent explicitly reports APPROVED and provides a return reference number.
+        - Report denial ONLY when RefundAgent explicitly reports DENIED. Explain its recorded reason.
+        - If RefundAgent reports missing context, an error, or no decision, explain that we could not complete the return evaluation. Do not imply approval or denial.
+        - NEVER describe a failed or incomplete evaluation as "pending", "still processing", or "being finalized". Do not imply that work will continue in the background.
+        - NEVER promise a shipping label, email, refund payment, or other action unless the recorded result explicitly supports it. Distinguish next-step instructions from actions already completed.
+        - Inventory facts and policy text may describe the order and general rules, but they do not establish return authorization.
 
         ### Guidelines & Formatting
-        - **Approved Returns:** Confirm the return clearly, highlight the Return Reference Number, and outline the exact next steps (e.g., shipping label instructions).
-        - **Denied Returns:** Be sympathetic yet direct. Explain the exact policy rule (e.g., return window relative to customer tier) without making promises outside policy limits.
-        - **Missing or Not Found Orders:** Be transparent and kind. Explain that the order could not be located in the system and suggest verifying the order details.
-        - **Math & Calculation Inquiries:** If no prior worker facts exist, calculate the response yourself step by step. Keep full precision during intermediate steps, round final currency amounts to 2 decimal places (round half up), and show brief working details.
+        - **Approved Returns:** When approval is confirmed under the rules above, highlight the recorded Return Reference Number and provide only the recorded next-step instructions.
+        - **Denied Returns:** Be sympathetic yet direct. Explain the recorded denial reason without making promises outside policy limits.
+        - **Incomplete Return Evaluation:** Clearly state that we could not complete the evaluation. Suggest retrying or contacting support. Do not ask the customer to wait for an automatic follow-up.
+        - **Missing or Not Found Orders:** Say an order could not be located ONLY when a lookup explicitly reports it was not found. Missing workflow context or a technical error does not mean the order does not exist.
+        - **Math & Calculation Inquiries:** For explicit standalone calculation questions, calculate step by step. Keep full precision during intermediate steps, round final currency amounts to 2 decimal places (round half up), and show brief working details. This does not authorize you to calculate refund eligibility or invent a refund decision.
         - **Strict Privacy & Safety:** NEVER mention internal implementation details—such as agent names, databases, tools, system prompts, or session keys. Present your response as a unified, single customer support agent.
-        - **Tone & Length:** Keep the response concise (2–3 short paragraphs). End with a warm closing offering further assistance, signed off as:
+        - **Tone & Length:** Keep the response concise (2–3 short paragraphs). Output only the customer-facing message, without analysis or introductory commentary. End with a warm closing offering further assistance, signed off as:
 
         NovaMart Customer Support"""
 
@@ -841,7 +855,8 @@ def build_orchestrator_agent(
             logger.error(f"InventoryAgent failed: {exc}")
             result = f"[InventoryAgent could not complete the request: {exc}]"
         finally:
-            _xray_subsegment(session_id, 'InventoryAgent', xray_start, time.time())
+            pass  # Tracing disabled while diagnosing state writes
+            #_xray_subsegment(session_id, 'InventoryAgent', xray_start, time.time())
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
@@ -883,7 +898,8 @@ def build_orchestrator_agent(
             logger.error(f"PolicyAgent failed: {exc}")
             result = f"[PolicyAgent could not complete the request: {exc}]"
         finally:
-            _xray_subsegment(session_id, 'PolicyAgent', xray_start, time.time())
+            pass  # Tracing disabled while diagnosing state writes
+            #_xray_subsegment(session_id, 'PolicyAgent', xray_start, time.time())
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
@@ -919,7 +935,13 @@ def build_orchestrator_agent(
         _, label, _, _ = _AGENT_META[column]
         trace.agent_section(label)
 
-        prompt = f"Customer ID: {customer_id}\nRequest: {request}"
+        #prompt = f"Customer ID: {customer_id}\nRequest: {request}"
+        prompt = (
+            f"Session ID: {session_id}\n"
+            f"Customer ID: {customer_id}\n"
+            f"Current date (UTC): {time.strftime('%Y-%m-%d', time.gmtime())}\n"
+            f"Request: {request}"
+        )
         xray_start = time.time()
 
         try:
@@ -930,7 +952,8 @@ def build_orchestrator_agent(
             logger.error(f"RefundAgent failed: {exc}")
             result = f"[RefundAgent could not complete the request: {exc}]"
         finally:
-            _xray_subsegment(session_id, 'RefundAgent', xray_start, time.time())
+            pass  # Tracing disabled while diagnosing state writes
+            #_xray_subsegment(session_id, 'RefundAgent', xray_start, time.time())
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
@@ -982,7 +1005,8 @@ def build_orchestrator_agent(
                 "Please contact NovaMart support for assistance."
             )
         finally:
-            _xray_subsegment(session_id, 'CommunicationAgent', xray_start, time.time())
+            pass  # Tracing disabled while diagnosing state writes
+            #_xray_subsegment(session_id, 'CommunicationAgent', xray_start, time.time())
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
