@@ -15,12 +15,9 @@ import sys
 import uuid
 
 from agent_utils import _trace_writer, _real_stdout, _strip_xml_tags
+from agent_observability import tracer, setup_logging, print_trace_hint, flush_logs
 from agent_orchestrator import (
-    build_inventory_agent,
-    build_refund_agent,
-    build_policy_agent,
-    build_communication_agent,
-    build_orchestrator_agent,
+    build_agent_graph,
     _read_workflow_state,
     trace,
 )
@@ -28,20 +25,16 @@ from agent_orchestrator import (
 # ── Build the agent graph ─────────────────────────────────────────────────────
 
 print("Initializing agent graph...")
-inventory_agent     = build_inventory_agent()
-refund_agent        = build_refund_agent()
-policy_agent        = build_policy_agent()
-communication_agent = build_communication_agent()
-orchestrator        = build_orchestrator_agent(
-    inventory_agent, refund_agent, policy_agent, communication_agent
-)
+setup_logging(to_cloudwatch=True)
+orchestrator = build_agent_graph()      # 5 agents + guardrail (if configured)
 print("All 5 agents ready.\n")
 
 # ── Demo request - exercises the full pipeline ────────────────────────────────
 #   OrchestratorAgent -> InventoryAgent -> RefundAgent -> CommunicationAgent
+#   CUST-001 (Alice, Premium) ordered ORD-27176 12 days ago - see seed_data.py
 
-CUSTOMER_ID = "CUST-001"
-QUERY       = "I want to return my wireless headphones from order ORD-27176"
+CUSTOMER_ID = 'CUST-003'
+QUERY = 'What is the status of my Yoga Mat Premium order ORD-91133?'
 
 session_id = str(uuid.uuid4())[:8]
 prompt     = f"[Session ID: {session_id}] [Customer ID: {CUSTOMER_ID}] {QUERY}"
@@ -57,7 +50,8 @@ print(f"Query    : {QUERY}\n")
 trace.new_turn()
 sys.stdout = _trace_writer
 try:
-    response = orchestrator(prompt)
+    with tracer.trace_request(session_id, CUSTOMER_ID, QUERY):
+        response = orchestrator(prompt)
 finally:
     sys.stdout = _real_stdout   # always restore, even on exception
 
@@ -76,3 +70,5 @@ print(f"{'=' * 68}")
 for line in text.splitlines():
     print(f"  {line}")
 print(f"{'=' * 68}\n")
+print_trace_hint()
+flush_logs()

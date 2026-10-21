@@ -27,3 +27,17 @@ payload.json
 response.json
 
 .venv/
+# Updated starter deployment artifacts
+build/
+agentcore/.cli/logs/
+agentcore/.cache/
+agentcore/agentcore_runtime/
+agentcore/*.zip
+agentcore/.env.local
+agentcore/cdk/node_modules/
+agentcore/cdk/cdk.out/
+agentcore/cdk/dist/
+venv/
+_to_delete/
+.DS_Store
+agentcore/.cli/

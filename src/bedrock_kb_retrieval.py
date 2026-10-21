@@ -1,7 +1,7 @@
 """
 bedrock_kb_retrieval.py
 =======================
-Pre-written helper - Bedrock Knowledge Base retrieval utility.
+Bedrock Knowledge Base retrieval utility.
 
 This module provides a thin wrapper around the Bedrock Agent Runtime
 `retrieve()` API. It is used by the three retriever sub-agents inside
@@ -11,15 +11,11 @@ PolicyAgent:
     ShippingPolicyRetrieverAgent  → SHIPPING_KB_ID
     WarrantyPolicyRetrieverAgent  → WARRANTY_KB_ID
 
-Students do NOT modify this file. They use it inside agent_orchestrator.py
-by importing `retrieve_from_knowledge_base`.
-
 Why Bedrock Knowledge Bases instead of a custom RAG pipeline?
   - Managed embeddings (Titan Embed Text v2) - no manual chunking or indexing
   - S3 Vectors as the backing store - cheap, no OpenSearch cluster required
   - bedrock-agent-runtime.retrieve() is the idiomatic AWS pattern for
     grounding agents in document corpora
-  - Students focus on agent orchestration, not embedding infrastructure
 
 API reference:
   https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_Retrieve.html
@@ -27,7 +23,12 @@ API reference:
 
 import boto3
 import os
-import json
+import sys
+
+# Each retrieval becomes a KnowledgeBase:<domain>
+# node on the Service Map (see agent_observability.py).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from agent_observability import trace_kb_retrieval
 
 # Bedrock Agent Runtime client  (handles KB retrieval - different from bedrock-runtime
 # which handles model invocation)
@@ -64,23 +65,24 @@ def retrieve_from_knowledge_base(
     if not kb_id:
         return []
 
-    try:
-        response = _bedrock_agent_runtime.retrieve(
-            knowledgeBaseId=kb_id,
-            retrievalQuery={'text': query},
-            retrievalConfiguration={
-                'vectorSearchConfiguration': {
-                    'numberOfResults': top_k
+    with trace_kb_retrieval(kb_id):
+        try:
+            response = _bedrock_agent_runtime.retrieve(
+                knowledgeBaseId=kb_id,
+                retrievalQuery={'text': query},
+                retrievalConfiguration={
+                    'vectorSearchConfiguration': {
+                        'numberOfResults': top_k
+                    }
                 }
-            }
-        )
-    except Exception as exc:
-        # Surface the error as structured text so the calling agent can report it
-        return [{
-            'text':   f"Knowledge base retrieval failed: {exc}",
-            'source': 'error',
-            'score':  0.0
-        }]
+            )
+        except Exception as exc:
+            # Surface the error as structured text so the calling agent can report it
+            return [{
+                'text':   f"Knowledge base retrieval failed: {exc}",
+                'source': 'error',
+                'score':  0.0
+            }]
 
     results = []
     for item in response.get('retrievalResults', []):
