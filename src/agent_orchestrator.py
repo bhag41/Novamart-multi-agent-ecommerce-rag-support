@@ -25,7 +25,7 @@ OrchestratorAgent creates state at start, each routing tool reads and
 updates it after the worker responds.
 
 Commands:
-  python src/agent_orchestrator.py test            # 3 scenarios, local run, traced to X-Ray
+  python src/agent_orchestrator.py test            # local scenarios, traced to X-Ray
   python src/agent_orchestrator.py chat            # interactive terminal chat
   python src/agent_orchestrator.py deploy          # Tasks 3-6 deployment pipeline (uses the AgentCore CLI)
   python src/agent_orchestrator.py invoke "<msg>"  # call the deployed AgentCore Runtime
@@ -1654,6 +1654,8 @@ TEST_CASES = [
     ("CUST-003", "What is the status of my Yoga Mat Premium order ORD-91133?"),
     ("CUST-002", "What is the return policy for premium customers?"),
     ("CUST-003", "How much would 5 items at $29.99 be with a 10% discount?"),
+    ("CUST-003", "I want to return my Yoga Mat Premium order ORD-91133. "
+                 "Please evaluate my refund eligibility. The item no longer meets my needs."),
 ]
 
 # Test customers shown by the chat command. Data matches seed_data.py.
@@ -1666,7 +1668,7 @@ TEST_CUSTOMERS = [
 
 
 def run_test_scenarios() -> None:
-    """Run the three scenarios locally; every request is traced to X-Ray."""
+    """Run order, policy, calculation, and refund scenarios traced to X-Ray."""
     print("Running local agent test...")
     setup_logging(to_cloudwatch=True)
     orchestrator = build_agent_graph()
@@ -1879,7 +1881,7 @@ if __name__ == '__main__':
     else:
         print("Usage:")
         print("  python src/agent_orchestrator.py deploy           # Deploy to AgentCore (Tasks 3-6)")
-        print("  python src/agent_orchestrator.py test             # Run the 3 test scenarios locally")
+        print("  python src/agent_orchestrator.py test             # Run the local test scenarios")
         print("  python src/agent_orchestrator.py chat             # Interactive terminal chat")
         print("  python src/agent_orchestrator.py invoke \"<msg>\"   # Call the deployed runtime")
         print("  python src/agent_orchestrator.py serve            # HTTP server (used inside AgentCore Runtime)")
