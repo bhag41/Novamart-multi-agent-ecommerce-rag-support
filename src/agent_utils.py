@@ -3,8 +3,6 @@ agent_utils.py
 ==============
 Terminal trace UI and output utilities for the multi-agent system.
 
-Pre-written - do not modify.
-
 This module provides:
   - _C            : ANSI colour constants (one colour per agent)
   - _TraceWriter  : stdout proxy that reformats Strands SDK output line-by-line
@@ -12,8 +10,7 @@ This module provides:
   - _AGENT_META   : display metadata (label, colour, role) per specialist agent
   - _strip_xml_tags : strips LLM-internal XML scaffolding from response strings
 
-Keeping these utilities in a separate file lets agent_orchestrator.py
-stay focused on agent architecture - the lesson content.
+These utilities are kept separate from the agent architecture.
 """
 
 import sys
@@ -237,7 +234,7 @@ class AgentTrace:
     All methods write directly to _real_stdout via _trace_print() so that
     our formatted headers are never processed by the _TraceWriter proxy.
 
-    Usage flow (automatic - no student code needed):
+    Usage flow:
       1. chat loop / demo.py    -> trace.new_turn()       before orchestrator()
       2. route_to_*()           -> trace.step_start()     before specialist agent
       3. route_to_*()           -> trace.agent_section()  labels agent reasoning

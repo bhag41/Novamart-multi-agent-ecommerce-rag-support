@@ -1,19 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Udacity Project - Enterprise Multi-Agent Architecture with Amazon Bedrock AgentCore
-  Pre-deployed infrastructure: DynamoDB, S3, IAM Roles, CloudWatch.
-  Cognito and API Gateway removed - project is tested via terminal, no UI required.
-  Students do NOT modify this stack. They build the AI agent layer on top of it.
+  Infrastructure for DynamoDB, S3, S3 Vectors, IAM roles, and CloudWatch.
 
 Parameters:
   ProjectName:
     Type: String
     Default: udacity-agentcore
-  StudentId:
-    Type: String
-    Default: student001
-    Description: Used to namespace resources per student in shared workspaces
-
 Resources:
 
   # ─────────────────────────────────────────────
@@ -30,6 +23,8 @@ Resources:
           AttributeType: S
         - AttributeName: order_id
           AttributeType: S
+      # Composite key: every order lookup needs both customer_id (partition
+      # key) and order_id (sort key).
       KeySchema:
         - AttributeName: customer_id
           KeyType: HASH
@@ -73,13 +68,13 @@ Resources:
         Enabled: true
 
   # ─────────────────────────────────────────────
-  # S3 - Policy Documents + Vector Storage
+  # S3 - Policy Documents (KB data source + deployment artifacts)
   # ─────────────────────────────────────────────
 
   PolicyDocumentsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 
+      BucketName: !Sub
         - '${ProjectName}-policy-docs-${AWS::AccountId}-${ShortUUID}'
         - ShortUUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
       VersioningConfiguration:
@@ -89,9 +84,19 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
 
-  # Used by Bedrock Knowledge Bases as the S3 Vectors backing store.
-  # Each Knowledge Base (returns, shipping, warranty) stores its
-  # vector index here under separate prefixes managed by Bedrock.
+  # ─────────────────────────────────────────────
+  # S3 VECTORS - Knowledge Base backing store (Task 5)
+  # ─────────────────────────────────────────────
+  # S3 Vectors is a separate service from general-purpose S3. A Bedrock
+  # Knowledge Base backed by S3 Vectors needs a *vector bucket* plus one
+  # *vector index* per Knowledge Base. All three are created here for selection
+  # in the Knowledge Base console wizard.
+  #
+  # Index settings match the Titan Embed Text v2 defaults used by the KBs:
+  #   dimension 1024, cosine distance, AMAZON_BEDROCK_TEXT non-filterable
+  #   (the chunk text is stored as metadata and must not be indexed).
+
+  # Preserve the original general-purpose S3 bucket during migration.
   VectorStoreBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -105,9 +110,55 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
 
+  KnowledgeBaseVectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      VectorBucketName: !Sub
+        - '${ProjectName}-vectors-${AWS::AccountId}-${ShortUUID}'
+        - ShortUUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+
+  ReturnsVectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      VectorBucketArn: !GetAtt KnowledgeBaseVectorBucket.VectorBucketArn
+      IndexName: returns-policy-index
+      DataType: float32
+      Dimension: 1024
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+
+  ShippingVectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      VectorBucketArn: !GetAtt KnowledgeBaseVectorBucket.VectorBucketArn
+      IndexName: shipping-policy-index
+      DataType: float32
+      Dimension: 1024
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+
+  WarrantyVectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      VectorBucketArn: !GetAtt KnowledgeBaseVectorBucket.VectorBucketArn
+      IndexName: warranty-policy-index
+      DataType: float32
+      Dimension: 1024
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+
   # ─────────────────────────────────────────────
   # IAM - Role for AgentCore
   # ─────────────────────────────────────────────
+  # Assumed by the AgentCore Runtime (and usable by Bedrock). The deployed
+  # runtime imports the same config.py used locally, so it needs
+  # to read CloudFormation exports and download the code package from S3.
 
   AgentCoreExecutionRole:
     Type: AWS::IAM::Role
@@ -134,6 +185,7 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                   - bedrock:ApplyGuardrail
+                  - bedrock:GetGuardrail
                 Resource: "*"
 
               # Bedrock Knowledge Base retrieval
@@ -143,7 +195,16 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:Retrieve
-                  - bedrock-agent:Retrieve
+                  - bedrock:GetKnowledgeBase
+                Resource: "*"
+
+              # CloudFormation exports + caller identity - read by config.py
+              # inside the deployed runtime (the same code path used locally)
+              - Effect: Allow
+                Action:
+                  - cloudformation:ListExports
+                  - cloudformation:DescribeStacks
+                  - sts:GetCallerIdentity
                 Resource: "*"
 
               # CloudWatch Logs - agent execution logs (Task 6: Observability)
@@ -157,11 +218,28 @@ Resources:
                   - logs:DescribeLogStreams
                 Resource: "*"
 
-              # X-Ray - distributed tracing
+              # X-Ray - distributed tracing (Task 6: Observability)
               - Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+
+              # AgentCore Memory - event storage for session summaries (Task 4)
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:GetEvent
+                  - bedrock-agentcore:ListEvents
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:ListMemories
+                  - bedrock-agentcore:RetrieveMemoryRecords
+                  - bedrock-agentcore:ListMemoryRecords
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:GetWorkloadAccessTokenForUserId
                 Resource: "*"
 
               # DynamoDB - all tables the agents read/write
@@ -181,18 +259,19 @@ Resources:
                   - !GetAtt WorkflowStateTable.Arn
 
               # S3 - policy documents bucket
-              # Used by seed_data.py to upload docs and by Bedrock KB sync
+              # Used by seed_data.py to upload docs and by Bedrock KB sync.
+              # (The AgentCore CLI stores the runtime code package in the CDK
+              # assets bucket, not here.)
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                   - s3:PutObject
                   - s3:DeleteObject
                   - s3:ListBucket
                 Resource:
                   - !GetAtt PolicyDocumentsBucket.Arn
                   - !Sub ${PolicyDocumentsBucket.Arn}/*
-                  - !GetAtt VectorStoreBucket.Arn
-                  - !Sub ${VectorStoreBucket.Arn}/*
 
               # S3 Vectors - backing store for Bedrock Knowledge Bases (Task 5)
               - Effect: Allow
@@ -236,10 +315,34 @@ Outputs:
     Export:
       Name: !Sub ${ProjectName}-PolicyBucket
 
+  # S3 Vectors bucket *name* (select this in the Knowledge Base wizard)
   VectorStoreBucketName:
-    Value: !Ref VectorStoreBucket
+    Value: !Sub
+      - '${ProjectName}-vectors-${AWS::AccountId}-${ShortUUID}'
+      - ShortUUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
     Export:
       Name: !Sub ${ProjectName}-VectorBucket
+
+  VectorStoreBucketArn:
+    Value: !GetAtt KnowledgeBaseVectorBucket.VectorBucketArn
+    Export:
+      Name: !Sub ${ProjectName}-VectorBucketArn
+
+  # One vector index per Knowledge Base (select the matching one per KB)
+  ReturnsVectorIndexName:
+    Value: returns-policy-index
+    Export:
+      Name: !Sub ${ProjectName}-ReturnsVectorIndex
+
+  ShippingVectorIndexName:
+    Value: shipping-policy-index
+    Export:
+      Name: !Sub ${ProjectName}-ShippingVectorIndex
+
+  WarrantyVectorIndexName:
+    Value: warranty-policy-index
+    Export:
+      Name: !Sub ${ProjectName}-WarrantyVectorIndex
 
   AgentCoreRoleArn:
     Value: !GetAtt AgentCoreExecutionRole.Arn
