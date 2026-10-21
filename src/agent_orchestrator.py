@@ -121,7 +121,7 @@ logs_client          = boto3.client('logs', region_name=config.AWS_REGION)
 
 def _create_workflow_state(session_id: str, customer_id: str) -> dict:
     """
-    Create a blank WorkflowState record at the start of a new customer session.
+    Create a blank WorkflowState record, or reuse the customer's existing session.
 
     Columns written on creation:
       session_id   - partition key
@@ -142,10 +142,22 @@ def _create_workflow_state(session_id: str, customer_id: str) -> dict:
         'ttl':         int(time.time()) + (24 * 3600),
     }
     table = dynamodb.Table(config.WORKFLOW_STATE_TABLE)
-    table.put_item(
-        Item=state,
-        ConditionExpression='attribute_not_exists(session_id)'
-    )
+    try:
+        table.put_item(
+            Item=state,
+            ConditionExpression='attribute_not_exists(session_id)'
+        )
+    except ClientError as exc:
+        if exc.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
+        existing = table.get_item(
+            Key={'session_id': session_id}, ConsistentRead=True
+        ).get('Item')
+        if not existing:
+            raise
+        if existing.get('customer_id') != customer_id:
+            raise ValueError('Session belongs to a different customer') from exc
+        return existing
     return state
 
 
@@ -960,7 +972,7 @@ def build_orchestrator_agent(
     @tool
     def initialize_session(session_id: str, customer_id: str) -> str:
         """
-        Create a blank WorkflowState record at the start of each new session.
+        Create or reuse the WorkflowState for this customer's session.
         Call this at the VERY BEGINNING of processing every customer request.
 
         Args:
@@ -1303,18 +1315,20 @@ def configure_observability(runtime_arn: str) -> None:
                           sampling percentage; runtime env AGENT_TRACING_ENABLED /
                           AGENT_TRACE_SAMPLING_RATE
     """
-    # TODO: Build the logging configuration
-    # logging_configuration = {
-    #     'cloudWatchConfig': {'logGroupName': config.AGENT_LOG_GROUP,
-    #                          'logLevel': 'INFO', 'enabled': True},
-    #     'xRayConfig':       {'enabled': True, 'samplingRate': 1.0},
-    # }
-    # Then apply it:  summary = apply_observability_config(runtime_arn, logging_configuration)
-    # Wrap the call in try/except - on success print the CloudWatch log group
-    # and the X-Ray sampling rate; on exception print
-    #   "[Note] Observability configuration failed: <e>"
-
-    pass
+    logging_configuration = {
+        'cloudWatchConfig': {
+            'logGroupName': config.AGENT_LOG_GROUP,
+            'logLevel': 'INFO',
+            'enabled': True,
+        },
+        'xRayConfig': {'enabled': True, 'samplingRate': 1.0},
+    }
+    try:
+        summary = apply_observability_config(runtime_arn, logging_configuration)
+        print(f"CloudWatch log group: {summary['log_group']}")
+        print(f"X-Ray sampling rate: {logging_configuration['xRayConfig']['samplingRate']:.0%}")
+    except Exception as e:
+        print(f"[Note] Observability configuration failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════
