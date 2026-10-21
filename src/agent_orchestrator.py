@@ -553,6 +553,8 @@ def build_policy_agent() -> Agent:
         tools=[retrieve_warranty_policy],
     )
 
+    _apply_guardrail([returns_retriever, shipping_retriever, warranty_retriever])
+
     # TODO: Implement search_all_policies - parallel RAG retrieval tool
     @tool
     def search_all_policies(query: str) -> str:
