@@ -246,14 +246,12 @@ def build_inventory_agent() -> Agent:
     only retrieves data for the OrchestratorAgent to share with downstream agents.
     """
 
-    # TODO: Create a BedrockModel using the WORKER model
     model = BedrockModel(
         model_id=config.WORKER_MODEL_ID,
         temperature=0.1,
         region_name=config.AWS_REGION,
     )
 
-    # TODO: System prompt for the Inventory Agent
     system_prompt = """You are the InventoryAgent for NovaMart customer support.
         Your sole responsibility is to retrieve accurate factual data regarding customer profiles, order histories, and specific order statuses from NovaMart databases.
 
@@ -294,7 +292,6 @@ def build_inventory_agent() -> Agent:
         - Price & Quantity: $<price> x <quantity>
         """
 
-    # TODO: Implement check_order_status tool
     @tool
     def check_order_status(customer_id: str, order_id: str) -> dict:
         """
@@ -319,7 +316,6 @@ def build_inventory_agent() -> Agent:
             return {'error': f'No order {order_id} found for customer {customer_id}'}
         return item
 
-    # TODO: Implement get_customer_tier
     @tool
     def get_customer_tier(customer_id: str) -> dict:
         """
@@ -339,7 +335,6 @@ def build_inventory_agent() -> Agent:
             return {'error': f'No customer found with id {customer_id}'}
         return item
 
-    # TODO: Implement list_customer_orders
     @tool
     def list_customer_orders(customer_id: str) -> dict:
         """
@@ -357,7 +352,6 @@ def build_inventory_agent() -> Agent:
         )
         return {'orders': response.get('Items', [])}
 
-    # TODO: Instantiate and return the Agent
     return Agent(
         model=model,
         system_prompt=system_prompt,
@@ -377,14 +371,12 @@ def build_refund_agent() -> Agent:
     WorkflowState and applies the correct policy window per customer tier.
     """
 
-    # TODO: Create a BedrockModel
     model = BedrockModel(
         model_id=config.WORKER_MODEL_ID,
         region_name=config.AWS_REGION,
         temperature=0.1,
     )
 
-    # TODO: System prompt for the Refund Agent
     system_prompt = """You are the RefundAgent for NovaMart customer support.
         Your sole job is to evaluate return/refund eligibility based on facts gathered by the InventoryAgent.
 
@@ -405,7 +397,6 @@ def build_refund_agent() -> Agent:
 
         Note: Report facts and decisions only for downstream agents. Do not draft the conversational response to the customer."""
 
-    # TODO: Implement get_inventory_context
     @tool
     def get_inventory_context(session_id: str) -> dict:
         """
@@ -422,7 +413,6 @@ def build_refund_agent() -> Agent:
             return {}
         return state.get('inventory_agent', {})
 
-    # TODO: Implement initiate_refund
     @tool
     def initiate_refund(customer_id: str, order_id: str, reason: str) -> dict:
         """
@@ -460,7 +450,6 @@ def build_refund_agent() -> Agent:
         }
 
 
-    # TODO: Instantiate and return the Agent
     return Agent(
         model=model,
         system_prompt=system_prompt,
@@ -487,10 +476,19 @@ def build_policy_agent() -> Agent:
         temperature=0.0,
     )
 
-    # TODO: Build ReturnsPolicyRetrieverAgent
     @tool
     def retrieve_returns_policy(query: str) -> str:
-        """Retrieve relevant passages from the Returns Policy knowledge base."""
+        """
+        Retrieve relevant passages from the Returns Policy knowledge base.
+
+        Args:
+            query: Natural-language question to search the returns policy for.
+
+        Returns:
+            Formatted policy passages with relevance scores and source URIs,
+            a no-results message when no passages are found, or formatted
+            error details if retrieval fails.
+        """
         results = retrieve_from_knowledge_base(config.RETURNS_KB_ID,query)
         return format_kb_results(results)
 
@@ -509,10 +507,19 @@ def build_policy_agent() -> Agent:
         tools=[retrieve_returns_policy],
     )
 
-    # TODO: Build ShippingPolicyRetrieverAgent
     @tool
     def retrieve_shipping_policy(query: str) -> str:
-        """Retrieve relevant passages from the Shipping Policy knowledge base."""
+        """
+        Retrieve relevant passages from the Shipping Policy knowledge base.
+
+        Args:
+            query: Natural-language question to search the shipping policy for.
+
+        Returns:
+            Formatted policy passages with relevance scores and source URIs,
+            a no-results message when no passages are found, or formatted
+            error details if retrieval fails.
+        """
         results = retrieve_from_knowledge_base(config.SHIPPING_KB_ID,query)
         return format_kb_results(results)
 
@@ -531,10 +538,19 @@ def build_policy_agent() -> Agent:
         tools=[retrieve_shipping_policy],
     )
 
-    # TODO: Build WarrantyPolicyRetrieverAgent
     @tool
     def retrieve_warranty_policy(query: str) -> str:
-        """Retrieve relevant passages from the Warranty Policy knowledge base."""
+        """
+        Retrieve relevant passages from the Warranty Policy knowledge base.
+
+        Args:
+            query: Natural-language question to search the warranty policy for.
+
+        Returns:
+            Formatted policy passages with relevance scores and source URIs,
+            a no-results message when no passages are found, or formatted
+            error details if retrieval fails.
+        """
         results = retrieve_from_knowledge_base(config.WARRANTY_KB_ID,query)
         return format_kb_results(results)
 
@@ -555,7 +571,6 @@ def build_policy_agent() -> Agent:
 
     _apply_guardrail([returns_retriever, shipping_retriever, warranty_retriever])
 
-    # TODO: Implement search_all_policies - parallel RAG retrieval tool
     @tool
     def search_all_policies(query: str) -> str:
         """
@@ -630,14 +645,12 @@ def build_policy_agent() -> Agent:
         )
         return combined
 
-    # TODO: Create a BedrockModel for the PolicyAgent coordinator
     coordinator_model = BedrockModel(
         model_id=config.WORKER_MODEL_ID,
         region_name=config.AWS_REGION,
         temperature=0.2,
     )
 
-    # TODO: System prompt for PolicyAgent coordinator
     system_prompt = """You are the Policy Agent for NovaMart customer support.
         Your role is to evaluate and synthesize customer policy inquiries using ONLY text retrieved from the policy knowledge bases.
 
@@ -651,7 +664,6 @@ def build_policy_agent() -> Agent:
 
         Output a clear, structured, and factual summary intended for downstream agents to synthesize into the final customer response."""
 
-    # TODO: Instantiate and return the PolicyAgent coordinator
     return Agent(
         model=coordinator_model,
         system_prompt=system_prompt,
@@ -671,14 +683,12 @@ def build_communication_agent() -> Agent:
     and composing a coherent, empathetic response.
     """
 
-    # TODO: Create a BedrockModel
     model = BedrockModel(
         model_id=config.WORKER_MODEL_ID,
         region_name=config.AWS_REGION,
         temperature=0.3 # for warm, natural tone
     )
 
-    # TODO: System prompt for the Communication Agent
     system_prompt = """You are the Communication Agent for NovaMart customer support.
         Your role is to write the FINAL customer-facing response. Your tone must be warm, professional, clear, and empathetic.
 
@@ -710,7 +720,6 @@ def build_communication_agent() -> Agent:
 
         NovaMart Customer Support"""
 
-    # TODO: Implement get_full_workflow_context
     @tool
     def get_full_workflow_context(session_id: str) -> dict:
         """
@@ -725,7 +734,6 @@ def build_communication_agent() -> Agent:
         state = _read_workflow_state(session_id)
         return _json_safe(state or {})
 
-    # TODO: Instantiate and return the Agent
     return Agent(
         model=model,
         system_prompt=system_prompt,
@@ -747,14 +755,12 @@ def build_orchestrator_agent(
     Build the Orchestrator Agent that routes requests and manages WorkflowState.
     """
 
-    # TODO: Create a BedrockModel using the ORCHESTRATOR model
     model = BedrockModel(
         model_id=config.ORCHESTRATOR_MODEL_ID,
         region_name=config.AWS_REGION,
         temperature=0.0,
     )
 
-    # TODO: System prompt for the Orchestrator
     system_prompt = """You are the Orchestrator Agent for NovaMart customer support.
         Your sole duty is to coordinate specialist worker agents. You NEVER write customer-facing responses, perform calculations, or answer user questions directly.
 
@@ -779,7 +785,6 @@ def build_orchestrator_agent(
         - **Error Propagation:** If a worker agent returns an error (e.g., "Order not found"), continue workflow execution and call `route_to_communication_agent` so it can format a polite customer response.
         - **Verbatim Response Delivery:** Once `route_to_communication_agent` returns, output its response EXACTLY as received without adding, altering, or summarizing text."""
 
-    # TODO: Implement route_to_inventory_agent
     @tool
     def route_to_inventory_agent(session_id: str, customer_id: str, request: str) -> str:
         """
@@ -815,14 +820,11 @@ def build_orchestrator_agent(
         except Exception as exc:
             logger.error(f"InventoryAgent failed: {exc}")
             result = f"[InventoryAgent could not complete the request: {exc}]"
-        finally:
-            pass  # Tracing disabled while diagnosing state writes
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
         return result
 
-    # TODO: Implement route_to_policy_agent
     @tool
     def route_to_policy_agent(session_id: str, request: str) -> str:
         """
@@ -857,14 +859,11 @@ def build_orchestrator_agent(
         except Exception as exc:
             logger.error(f"PolicyAgent failed: {exc}")
             result = f"[PolicyAgent could not complete the request: {exc}]"
-        finally:
-            pass  # Tracing disabled while diagnosing state writes
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
         return result
 
-    # TODO: Implement route_to_refund_agent
     @tool
     def route_to_refund_agent(session_id: str, customer_id: str, request: str) -> str:
         """
@@ -910,14 +909,11 @@ def build_orchestrator_agent(
         except Exception as exc:
             logger.error(f"RefundAgent failed: {exc}")
             result = f"[RefundAgent could not complete the request: {exc}]"
-        finally:
-            pass  # Tracing disabled while diagnosing state writes
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
         return result
 
-    # TODO: Implement route_to_communication_agent
     @tool
     def route_to_communication_agent(session_id: str, customer_id: str,
                                      original_request: str) -> str:
@@ -962,15 +958,12 @@ def build_orchestrator_agent(
                 "We encountered an internal issue processing your request. "
                 "Please contact NovaMart support for assistance."
             )
-        finally:
-            pass  # Tracing disabled while diagnosing state writes
 
         _update_workflow_state(session_id, {column: result}, old_version)
         trace.step_done(column, old_version)
         return result
 
 
-    # TODO: Implement initialize_session
     @tool
     def initialize_session(session_id: str, customer_id: str) -> str:
         """
@@ -987,7 +980,6 @@ def build_orchestrator_agent(
         _create_workflow_state(session_id, customer_id)
         return f"Session {session_id} initialized for customer {customer_id}"
 
-    # TODO: Instantiate and return the OrchestratorAgent
     return Agent(
         model=model,
         system_prompt=system_prompt,
