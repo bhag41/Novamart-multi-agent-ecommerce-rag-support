@@ -2,6 +2,8 @@
 
 **Udacity - School of AI | Course 3.3 | Capstone Project 3.3 NovaMart**
 
+Completed Udacity project implementing NovaMart multi-agent customer support. Deployed to Amazon Bedrock AgentCore Runtime, with all project tests passing (**120/120**). Submission evidence is in [Evidences - Screenshots](Evidences%20-%20Screenshots/).
+
 A production-grade multi-agent customer support system built with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) and Amazon Bedrock AgentCore. The system automatically routes customer support requests to specialist agents, retrieves grounded knowledge via **parallel multi-agent RAG**, enforces enterprise safety guardrails, and maintains shared workflow state across agents - all observable through CloudWatch and X-Ray.
 
 <img width="1140" height="824" alt="NovaMart architecture overview" src="diagrams/architecture-overview.png" />
@@ -81,7 +83,7 @@ Shared State: DynamoDB WorkflowStateTable (with optimistic locking)
 
 ## Setup
 
-This is the unfinished student starter: complete the TODOs in `src/agent_orchestrator.py`. The CLI configuration and support modules are provided infrastructure, not exercise solutions. Runtime deployment and runtime configuration updates use AgentCore CLI; application service calls still use the AWS SDK.
+The project implementation is complete in `src/agent_orchestrator.py`. The original Udacity setup and task instructions are retained below for reference. The CLI configuration and support modules are provided infrastructure. Runtime deployment and runtime configuration updates use AgentCore CLI; application service calls still use the AWS SDK.
 
 Use the tested CLI version **0.30.0** shown above. The supplied CDK compatibility fix keeps HTTP explicit in the deployed runtime metadata.
 
